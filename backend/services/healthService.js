@@ -1,17 +1,15 @@
 
-const services = {
+const initialServices = {
     api: {
         name: "API Server",
         status: "healthy",
         responseTime: 120
     },
-
     database: {
         name: "Database",
         status: "healthy",
         responseTime: 45
     },
-
     auth: {
         name: "Authentication Service",
         status: "healthy",
@@ -19,10 +17,13 @@ const services = {
     }
 };
 
+// Keep a separate copy of the current service state.
+let services = structuredClone(initialServices);
+
 function checkServiceHealth() {
     return {
         checkedAt: new Date().toISOString(),
-        services: services
+        services: structuredClone(services)
     };
 }
 
@@ -37,7 +38,13 @@ function simulateServiceFailure(serviceName) {
     return checkServiceHealth();
 }
 
+function resetHealth() {
+    services = structuredClone(initialServices);
+    return checkServiceHealth();
+}
+
 module.exports = {
     checkServiceHealth,
-    simulateServiceFailure
+    simulateServiceFailure,
+    resetHealth
 };

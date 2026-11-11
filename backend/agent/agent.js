@@ -1,15 +1,67 @@
 
-
 const {
     toolDeclarations,
     executeTool
 } = require("./tools");
 
+// Wait before retrying a temporary API failure.
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Retry only temporary Gemini API failures.
+// 3 attempts = 1 initial request + 2 retries.
+async function generateWithRetry(ai, request, maxAttempts = 3) {
+    const retryableStatuses = [429, 500, 502, 503, 504];
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await ai.models.generateContent(request);
+        } catch (error) {
+            const status = Number(error.status || error.code);
+
+            if (
+                !retryableStatuses.includes(status) ||
+                attempt === maxAttempts
+            ) {
+                throw error;
+            }
+
+            const delay = 1000 * (2 ** (attempt - 1));
+
+            console.warn(
+                `[Agent] Gemini returned ${status}. Retrying in ${delay}ms (attempt ${attempt + 1}/${maxAttempts})`
+            );
+
+            await sleep(delay);
+        }
+    }
+}
+
+// Normalize arguments so equivalent objects produce the same key,
+// even if their property order differs.
+function normalize(value) {
+    if (Array.isArray(value)) {
+        return value.map(normalize);
+    }
+
+    if (value !== null && typeof value === "object") {
+        return Object.keys(value)
+            .sort()
+            .reduce((result, key) => {
+                result[key] = normalize(value[key]);
+                return result;
+            }, {});
+    }
+
+    return value;
+}
+
 async function runIncidentAgent(incidentDescription) {
 
-     const { GoogleGenAI, FunctionCallingConfigMode } =
+    const { GoogleGenAI, FunctionCallingConfigMode } =
         await import("@google/genai");
-        
+
     if (!process.env.GEMINI_API_KEY) {
         throw new Error("GEMINI_API_KEY is missing");
     }
@@ -20,7 +72,6 @@ async function runIncidentAgent(incidentDescription) {
 
     const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
-    // Conversation history starts with the incident.
     const contents = [
         {
             role: "user",
@@ -68,21 +119,25 @@ async function runIncidentAgent(incidentDescription) {
         }
     };
 
-    // Initial request to Gemini
-    let response = await ai.models.generateContent({
+    // Track diagnostic calls already executed in this investigation.
+    const executedCalls = new Set();
+
+    const MAX_TOOL_CALLS = 6;
+    let toolCallCount = 0;
+
+    // Initial request to Gemini.
+    let response = await generateWithRetry(ai, {
         model,
         contents,
         config
     });
 
-    const MAX_TOOL_CALLS = 6;
-    let toolCallCount = 0;
-
-    // Agent loop
+    // Agent loop.
     while (true) {
+
         const functionCalls = response.functionCalls || [];
 
-        // No more tool requests: Gemini has finished investigating.
+        // Gemini has finished investigating.
         if (functionCalls.length === 0) {
             return {
                 incidentDescription,
@@ -91,19 +146,11 @@ async function runIncidentAgent(incidentDescription) {
             };
         }
 
-        // Safety limit
-        if (toolCallCount + functionCalls.length > MAX_TOOL_CALLS) {
-            return {
-                incidentDescription,
-                observations,
-                assessment:
-                    "Investigation stopped because the tool-call limit was reached."
-            };
-        }
+        console.log(
+            "[Agent] Gemini requested:",
+            functionCalls.map(call => call.name)
+        );
 
-        console.log("[Agent] Gemini requested:", functionCalls.map(c => c.name));
-
-        // Preserve Gemini's original model response.
         const modelContent = response.candidates?.[0]?.content;
 
         if (!modelContent) {
@@ -114,14 +161,48 @@ async function runIncidentAgent(incidentDescription) {
 
         const functionResponseParts = [];
 
-        // Execute each requested tool.
+        // Execute requested tools.
         for (const call of functionCalls) {
+
+            const args = call.args || {};
+
+            const callKey = JSON.stringify({
+                name: call.name,
+                args: normalize(args)
+            });
+
+            // Prevent repeating an identical diagnostic call.
+            if (executedCalls.has(callKey)) {
+                console.warn(
+                    `[Agent] Repeated tool call detected: ${call.name}`
+                );
+
+                return {
+                    incidentDescription,
+                    observations,
+                    assessment:
+                        `Investigation stopped because Gemini repeatedly requested ${call.name} with identical arguments.`
+                };
+            }
+
+            // Enforce the tool execution limit.
+            if (toolCallCount >= MAX_TOOL_CALLS) {
+                return {
+                    incidentDescription,
+                    observations,
+                    assessment:
+                        "Investigation stopped because the tool-call limit was reached."
+                };
+            }
+
+            executedCalls.add(callKey);
+
             console.log("[Agent] Executing:", call.name);
 
             let result;
 
             try {
-                result = executeTool(call.name, call.args || {});
+                result = executeTool(call.name, args);
             } catch (error) {
                 result = {
                     error: error.message
@@ -130,13 +211,12 @@ async function runIncidentAgent(incidentDescription) {
 
             observations.push({
                 tool: call.name,
-                arguments: call.args || {},
+                arguments: args,
                 result
             });
 
             toolCallCount++;
 
-            // Send tool result back to Gemini.
             functionResponseParts.push({
                 functionResponse: {
                     name: call.name,
@@ -155,8 +235,9 @@ async function runIncidentAgent(incidentDescription) {
 
         console.log("[Agent] Sending observations back to Gemini");
 
-        // Gemini gets another opportunity to reason.
-        response = await ai.models.generateContent({
+        // Retry only this Gemini request.
+        // Previously executed tools will NOT run again.
+        response = await generateWithRetry(ai, {
             model,
             contents,
             config

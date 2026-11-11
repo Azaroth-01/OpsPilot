@@ -1,3 +1,7 @@
+const {
+    triggerIncident
+} = require("../services/incidentSimulationService");
+
 
 const express = require("express");
 const router = express.Router();
@@ -30,6 +34,22 @@ router.post("/inspect", async (req, res) => {
 
         return res.status(500).json({
             error: "Incident investigation failed"
+        });
+    }
+});
+
+
+router.post("/simulate", (req, res) => {
+    const { incidentType } = req.body;
+
+    try {
+        const result = triggerIncident(incidentType);
+
+        return res.status(200).json(result);
+
+    } catch (error) {
+        return res.status(400).json({
+            error: error.message
         });
     }
 });

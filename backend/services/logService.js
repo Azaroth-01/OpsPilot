@@ -1,5 +1,5 @@
 
-const logs = [
+const initialLogs = [
     {
         timestamp: "10:01:02",
         level: "INFO",
@@ -11,32 +11,11 @@ const logs = [
         level: "INFO",
         service: "auth",
         message: "User authentication successful"
-    },
-    {
-        timestamp: "10:01:08",
-        level: "ERROR",
-        service: "database",
-        message: "Database connection failed"
-    },
-    {
-        timestamp: "10:01:09",
-        level: "ERROR",
-        service: "database",
-        message: "Connection pool exhausted"
-    },
-    {
-        timestamp: "10:01:12",
-        level: "WARN",
-        service: "api",
-        message: "Request processing delayed"
-    },
-    {
-        timestamp: "10:01:15",
-        level: "INFO",
-        service: "auth",
-        message: "Authentication service operational"
     }
 ];
+
+// Current logs are independent of the baseline logs.
+let logs = structuredClone(initialLogs);
 
 function analyzeLogs(level, service) {
     let filteredLogs = logs;
@@ -63,6 +42,30 @@ function analyzeLogs(level, service) {
     };
 }
 
+function addLog(level, service, message) {
+    const validLevels = ["INFO", "WARN", "ERROR"];
+    const validServices = ["api", "database", "auth"];
+
+    if (!validLevels.includes(level) ||
+        !validServices.includes(service)) {
+        throw new Error("Invalid log level or service");
+    }
+
+    logs.push({
+        timestamp: new Date().toISOString(),
+        level,
+        service,
+        message
+    });
+}
+
+function resetLogs() {
+    logs = structuredClone(initialLogs);
+    return analyzeLogs();
+}
+
 module.exports = {
-    analyzeLogs
+    analyzeLogs,
+    addLog,
+    resetLogs
 };
