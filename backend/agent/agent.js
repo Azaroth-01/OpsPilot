@@ -114,7 +114,7 @@ if (
 }
 
 
-async function runIncidentAgent(incidentDescription) {
+async function runIncidentAgent(incidentDescription, incidentId) {
 
     const { GoogleGenAI, FunctionCallingConfigMode } =
         await import("@google/genai");
@@ -325,7 +325,7 @@ RESPONSE RULES:
             let result;
 
             try {
-                result = executeTool(call.name, args);
+                result = executeTool(call.name, args,{ incidentId });
             } catch (error) {
                 result = {
                     error: error.message

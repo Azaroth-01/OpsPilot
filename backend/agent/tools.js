@@ -60,20 +60,25 @@ const toolHandlers = {
     analyzeLogs: (args = {}) =>
         analyzeLogs(args.level, args.service),
 
-    requestRecoveryApproval: (args = {}) =>
-    createApproval(args.action)
+    requestRecoveryApproval: (args = {}, context = {}) => {
+    if (!context.incidentId) {
+        throw new Error("Incident ID is required to request recovery approval");
+    }
+
+    return createApproval(args.action, context.incidentId);
+}
 
 };
 
 // 3. Controlled execution
-function executeTool(name, args = {}) {
+function executeTool(name, args = {}, context = {}) {
     const handler = toolHandlers[name];
 
     if (!handler) {
         throw new Error(`Unknown tool: ${name}`);
     }
 
-    return handler(args);
+    return handler(args, context);
 }
 
 module.exports = {

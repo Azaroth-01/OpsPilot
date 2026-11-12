@@ -10,7 +10,7 @@ const allowedActions = {
 };
 
 // Create a new approval request.
-function createApproval(action) {
+function createApproval(action, incidentId = null) {
 
     const service = allowedActions[action];
 
@@ -19,13 +19,14 @@ function createApproval(action) {
     }
 
     const approval = {
-        id: randomUUID(),
-        action,
-        service,
-        status: "pending",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    };
+    id: randomUUID(),
+    action,
+    service: allowedActions[action],
+    incidentId,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+};
 
     approvals.set(approval.id, approval);
 
