@@ -43,8 +43,21 @@ function resetHealth() {
     return checkServiceHealth();
 }
 
+function restoreService(serviceName) {
+    if (!initialServices[serviceName]) {
+        throw new Error("Unknown service");
+    }
+
+    services[serviceName].status = "healthy";
+    services[serviceName].responseTime =
+        initialServices[serviceName].responseTime;
+
+    return checkServiceHealth();
+}
+
 module.exports = {
     checkServiceHealth,
     simulateServiceFailure,
-    resetHealth
+    resetHealth,
+    restoreService
 };

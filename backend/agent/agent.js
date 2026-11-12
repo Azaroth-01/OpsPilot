@@ -57,6 +57,63 @@ function normalize(value) {
     return value;
 }
 
+
+function parseAssessment(text) {
+    if (!text) {
+        throw new Error("Gemini returned an empty assessment");
+    }
+
+    try {
+        const assessment = JSON.parse(text);
+
+        const requiredFields = [
+            "incidentSummary",
+            "affectedServices",
+            "likelyRootCause",
+            "supportingEvidence",
+            "recommendedNextAction"
+        ];
+
+        for (const field of requiredFields) {
+            if (!(field in assessment)) {
+                throw new Error(`Missing assessment field: ${field}`);
+            }
+        }
+
+        if (!Array.isArray(assessment.affectedServices)) {
+            throw new Error("affectedServices must be an array");
+        }
+
+        if (!Array.isArray(assessment.supportingEvidence)) {
+            throw new Error("supportingEvidence must be an array");
+        }
+
+        const validActionTypes = ["recovery", "investigation", "none"];
+
+if (
+    !assessment.recommendedNextAction ||
+    !validActionTypes.includes(assessment.recommendedNextAction.type)
+) {
+    throw new Error("Invalid recommended action type");
+}
+
+const action = assessment.recommendedNextAction.action;
+
+if (
+    action !== null &&
+    action !== "restart_database"
+) {
+    throw new Error("Unsupported recommended recovery action");
+}
+
+        return assessment;
+
+    } catch (error) {
+        throw new Error(`Invalid Gemini assessment: ${error.message}`);
+    }
+}
+
+
 async function runIncidentAgent(incidentDescription) {
 
     const { GoogleGenAI, FunctionCallingConfigMode } =
@@ -87,23 +144,78 @@ async function runIncidentAgent(incidentDescription) {
 
     const config = {
         systemInstruction: `
-            You are OpsPilot, a DevOps incident investigation agent.
+            
+You are OpsPilot, a DevOps incident investigation agent.
 
-            Investigate incidents using the available diagnostic tools.
+Your responsibility is to investigate incidents, identify likely root causes,
+and recommend appropriate recovery actions.
 
-            Examine tool results before deciding your next action.
-            You may request multiple tools when useful.
-            Do not invent diagnostic results.
-            Do not recommend recovery without sufficient evidence.
+INVESTIGATION RULES:
 
-            Once you have enough evidence, provide:
-            1. Incident summary
-            2. Affected services
-            3. Likely root cause
-            4. Supporting evidence
-            5. Recommended next action
+1. Investigate incidents using the available diagnostic tools.
+2. Examine tool results before deciding your next action.
+3. Request multiple diagnostic tools when useful.
+4. Never invent diagnostic results.
+5. Do not recommend recovery without sufficient supporting evidence.
 
-            Do not execute recovery actions.
+RECOVERY RULES:
+
+1. You may request human approval for a recovery action using
+   requestRecoveryApproval.
+2. Only request approval when diagnostic evidence justifies the action.
+3. Currently, the only supported recovery action is restart_database.
+4. Request this action only when the database is unhealthy and the
+   diagnostic evidence supports a database-related failure.
+5. Do not request approval repeatedly for the same incident.
+6. Requesting approval does NOT execute the recovery.
+7. Never claim that an action was approved or executed merely because
+   an approval request was created.
+8. Never attempt to execute recovery actions yourself.
+9. If no supported recovery action is justified, explain why.
+
+
+FINAL RESPONSE FORMAT:
+
+After completing the investigation and any justified approval request,
+return ONLY valid JSON.
+
+Do not use Markdown formatting or code fences.
+
+Use this exact structure:
+
+{
+    "incidentSummary": "Brief incident summary",
+    "affectedServices": [
+        {
+            "service": "service identifier",
+            "impact": "Observed impact"
+        }
+    ],
+    "likelyRootCause": "Likely root cause",
+    "supportingEvidence": [
+        {
+            "source": "Diagnostic tool name",
+            "finding": "Evidence returned by that tool"
+        }
+    ],
+    "recommendedNextAction": {
+        "type": "recovery, investigation, or none",
+        "action": "Supported recovery action or null",
+        "reason": "Reason for the recommendation"
+    }
+}
+
+RESPONSE RULES:
+
+1. Use only evidence obtained during the investigation.
+2. Do not invent services, logs, measurements or observations.
+3. If evidence is insufficient, state that the root cause is uncertain.
+4. If no recovery is justified, do not request approval.
+5. Do not include approval IDs or claim approval/execution status.
+   The backend will attach actual approval information.
+6. Return valid JSON only.
+
+
         `,
 
         tools: [
@@ -139,12 +251,23 @@ async function runIncidentAgent(incidentDescription) {
 
         // Gemini has finished investigating.
         if (functionCalls.length === 0) {
-            return {
-                incidentDescription,
-                observations,
-                assessment: response.text || "No final assessment returned."
-            };
-        }
+    const assessment = parseAssessment(response.text);
+
+    const approvalObservation = observations.find(
+        observation =>
+            observation.tool === "requestRecoveryApproval" &&
+            !observation.result.error
+    );
+
+    return {
+        incidentDescription,
+        observations,
+        assessment,
+        approvalRequest: approvalObservation
+            ? approvalObservation.result
+            : null
+    };
+}
 
         console.log(
             "[Agent] Gemini requested:",

@@ -1,6 +1,7 @@
 
 const { checkServiceHealth } = require("../services/healthService");
 const { analyzeLogs } = require("../services/logService");
+const { createApproval } = require("../services/approvalService");
 
 // 1. Descriptions sent to Gemini
 const toolDeclarations = [
@@ -32,7 +33,24 @@ const toolDeclarations = [
                 }
             }
         }
+    },
+    {
+    name: "requestRecoveryApproval",
+    description:
+        "Requests human approval for a predefined recovery action. This only creates a pending approval request. It does NOT execute the recovery action.",
+    parametersJsonSchema: {
+        type: "object",
+        properties: {
+            action: {
+                type: "string",
+                enum: ["restart_database"],
+                description: "The recovery action requiring human approval."
+            }
+        },
+        required: ["action"]
     }
+}
+
 ];
 
 // 2. Actual functions our backend can execute
@@ -40,7 +58,11 @@ const toolHandlers = {
     checkServiceHealth: () => checkServiceHealth(),
 
     analyzeLogs: (args = {}) =>
-        analyzeLogs(args.level, args.service)
+        analyzeLogs(args.level, args.service),
+
+    requestRecoveryApproval: (args = {}) =>
+    createApproval(args.action)
+
 };
 
 // 3. Controlled execution
